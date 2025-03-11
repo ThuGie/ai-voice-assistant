@@ -28,7 +28,27 @@ This project seamlessly integrates several powerful open-source technologies:
 - Microphone for voice input
 - Speakers for voice output
 
-## Installation
+## Quick Installation
+
+We provide easy installation scripts for different platforms:
+
+### Windows
+
+1. Download or clone this repository
+2. Double-click `install.bat`
+3. Follow the on-screen instructions
+
+### Linux/macOS
+
+1. Download or clone this repository
+2. Open a terminal in the project directory
+3. Make the script executable: `chmod +x install.sh`
+4. Run the installation script: `./install.sh`
+5. Follow the on-screen instructions
+
+### Manual Installation
+
+For more control over the installation process:
 
 1. Clone this repository:
    ```bash
@@ -73,6 +93,21 @@ This project seamlessly integrates several powerful open-source technologies:
    - "Share my window" - Allows the AI to see a specific window
    - "Remember this conversation" - Explicitly saves the current conversation for future reference
 
+## Command Interface
+
+In addition to voice commands, you can use text commands prefixed with `!` during your conversation:
+
+- `!exit` or `!quit` - Exit the assistant
+- `!voice [name]` - Change voice or list available voices
+- `!model [name]` - Change AI model or list available models
+- `!screenshot` - Take and analyze a screenshot
+- `!webcam` - Capture and analyze from webcam
+- `!memory` - Conversation memory management
+- `!memory list` - List recent conversations
+- `!memory switch <id>` - Switch to a different conversation
+- `!memory new [title]` - Create a new conversation
+- `!help` - Show help information
+
 ## Voice Model Selection
 
 MeloTTS comes with several voice models. You can select your preferred voice by:
@@ -99,6 +134,17 @@ Available voices include:
 - french_male_1
 - spanish_female_1
 
+## Configuration
+
+The assistant can be configured through the `config.json` file. You can modify:
+
+- TTS settings (voice, sample rate)
+- STT settings (model size, language)
+- AI settings (model, system prompt)
+- Vision settings
+- Memory settings
+- UI preferences
+
 ## Future Enhancements
 
 The following features are planned for future releases:
@@ -108,6 +154,10 @@ The following features are planned for future releases:
 - **PC Control**: Allow the AI to perform system operations with proper safeguards
 - **Web Browsing**: Enable the AI to search and browse the internet
 - **Text-Generation-WebUI Integration**: Support for additional text generation interfaces
+
+## Troubleshooting
+
+For common issues and solutions, see the [INSTALL.md](INSTALL.md) file.
 
 ## Contributing
 
