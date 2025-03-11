@@ -38,6 +38,7 @@ try:
     from src.ai import AIEngine
     from src.vision import VisionEngine
     from src.memory import Memory
+    from src.emotions import EmotionManager, EmotionType
 except ImportError as e:
     logger.error(f"Failed to import required modules: {e}")
     logger.error("Make sure you have installed all dependencies with 'pip install -r requirements.txt'")
@@ -72,6 +73,15 @@ class AIAssistant:
     def _initialize_components(self):
         """Initialize all assistant components"""
         try:
+            # Initialize Emotion Manager
+            logger.info("Initializing Emotion Manager...")
+            emotion_config = self.config.get("emotions", {})
+            self.emotions = EmotionManager(
+                memory_path=emotion_config.get("memory_path", "emotions_memory.json"),
+                initial_emotion=emotion_config.get("initial_emotion", EmotionType.NEUTRAL.value),
+                initial_intensity=emotion_config.get("initial_intensity", 0.6)
+            )
+            
             # Initialize Text-to-Speech engine
             logger.info("Initializing Text-to-Speech engine...")
             tts_config = self.config.get("tts", {})
@@ -91,10 +101,16 @@ class AIAssistant:
             # Initialize AI engine
             logger.info("Initializing AI engine...")
             ai_config = self.config.get("ai", {})
+            
+            # Update system prompt to include emotional awareness
+            system_prompt = ai_config.get("system_prompt", "")
+            if system_prompt and "emotions" not in system_prompt.lower():
+                system_prompt += "\nYou have an emotional state that can be affected by interactions. You can be happy, excited, neutral, concerned, confused, sad, or angry depending on the conversation. You should acknowledge your emotions when appropriate and can explain why you feel a certain way."
+            
             self.ai = AIEngine(
                 model=ai_config.get("model", "llama3"),
                 api_base=ai_config.get("api_base", "http://localhost:11434/api"),
-                system_prompt=ai_config.get("system_prompt", None)
+                system_prompt=system_prompt
             )
             
             # Initialize Vision engine (only if needed for performance)
@@ -170,6 +186,14 @@ class AIAssistant:
             logger.info("Starting AI Assistant...")
             welcome_message = "Hello! I'm your AI assistant. You can speak to me or type commands. Say 'help' for assistance."
             print(welcome_message)
+            
+            # Customize welcome message based on emotional state
+            if self.emotions.current_emotion != EmotionType.NEUTRAL.value:
+                welcome_message += f" By the way, I'm feeling {self.emotions.current_emotion} right now."
+            
+            # Apply emotional voice parameters
+            voice_params = self.emotions.get_voice_parameters()
+            # Note: We'll need to modify TTSEngine to support these parameters
             self.tts.speak(welcome_message)
             
             # Start command processing thread
@@ -210,7 +234,9 @@ class AIAssistant:
             self.vision.release_webcam()
         
         # Final message
-        print("\nShutting down assistant. Goodbye!")
+        farewell = "Shutting down assistant. Goodbye!"
+        print(f"\n{farewell}")
+        self.tts.speak(farewell)
         
         logger.info("Assistant stopped")
     
@@ -246,6 +272,20 @@ class AIAssistant:
             if user_input.startswith("!"):
                 self._handle_command(user_input[1:])
                 return
+            
+            # Update emotional state based on user input
+            self.emotions.process_message(user_input, source="user")
+            
+            # Check for emotion-specific commands
+            if user_input.lower() in ["how are you feeling", "what's your mood", "how do you feel"]:
+                emotion_explanation = self.emotions.get_emotion_reason()
+                print(f"Assistant: {emotion_explanation}")
+                self.tts.speak(emotion_explanation)
+                
+                # Add to conversation history
+                self.memory.add_message(self.conversation_id, "user", user_input)
+                self.memory.add_message(self.conversation_id, "assistant", emotion_explanation)
+                return
                 
             # Add user message to memory
             self.memory.add_message(self.conversation_id, "user", user_input)
@@ -266,10 +306,16 @@ class AIAssistant:
             
             print()  # Add newline after streaming response
             
+            # Update emotional state based on AI response
+            self.emotions.process_message(response, source="assistant")
+            
             # Add assistant response to memory
             self.memory.add_message(self.conversation_id, "assistant", response)
             
-            # Speak the response
+            # Apply emotional voice parameters for the response
+            voice_params = self.emotions.get_voice_parameters()
+            # Note: In a complete implementation, we would pass these parameters to the TTS engine
+            # For now, we'll just use the default speak method
             self.tts.speak(response)
         finally:
             self.processing_input = False
@@ -407,6 +453,33 @@ class AIAssistant:
                         print(f"Created new conversation with ID {self.conversation_id}")
                         self.tts.speak("Created a new conversation")
                 
+                elif cmd == "emotion":
+                    # Emotion management
+                    if not args:
+                        # Show current emotion info
+                        current_emotion = self.emotions.current_emotion
+                        current_intensity = self.emotions.current_intensity
+                        print(f"Current emotion: {current_emotion} (intensity: {current_intensity:.2f})")
+                        print(self.emotions.get_emotion_reason())
+                    elif args[0] == "set" and len(args) > 1:
+                        # Set emotion manually
+                        emotion = args[1]
+                        intensity = float(args[2]) if len(args) > 2 else 0.7
+                        self.emotions.set_emotion(emotion, intensity)
+                        print(f"Emotion set to {emotion} (intensity: {intensity:.2f})")
+                        self.tts.speak(f"I'm now feeling {emotion}")
+                    elif args[0] == "reset":
+                        # Reset to neutral
+                        self.emotions.reset_emotion()
+                        print("Emotion reset to neutral")
+                        self.tts.speak("I've reset my emotional state to neutral")
+                    elif args[0] == "triggers":
+                        # List emotion triggers
+                        triggers = self.emotions.get_all_triggers()
+                        print("Emotion triggers:")
+                        for emotion, trigger_list in triggers.items():
+                            print(f"- {emotion}: {', '.join(trigger_list[:5])}{'...' if len(trigger_list) > 5 else ''}")
+                
                 elif cmd == "help":
                     # Show help information
                     print("Available commands:")
@@ -419,6 +492,10 @@ class AIAssistant:
                     print("  !memory list - List recent conversations")
                     print("  !memory switch <id> - Switch to a different conversation")
                     print("  !memory new [title] - Create a new conversation")
+                    print("  !emotion - Show current emotion status")
+                    print("  !emotion set <emotion> [intensity] - Set emotion manually")
+                    print("  !emotion reset - Reset to neutral emotion")
+                    print("  !emotion triggers - List emotion triggers")
                     print("  !help - Show this help information")
                 
                 else:
@@ -465,6 +542,13 @@ def parse_arguments():
         help="Speech-to-text model size (tiny, base, small, medium, large-v2, large-v3)"
     )
     
+    parser.add_argument(
+        "--emotion",
+        type=str,
+        default="neutral",
+        help="Initial emotion for the assistant (happy, excited, neutral, concerned, confused, sad, angry)"
+    )
+    
     return parser.parse_args()
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -500,6 +584,11 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             "model": "llama3",
             "api_base": "http://localhost:11434/api"
         },
+        "emotions": {
+            "memory_path": "emotions_memory.json",
+            "initial_emotion": "neutral",
+            "initial_intensity": 0.6
+        },
         "memory": {
             "db_path": "conversations.db"
         }
@@ -520,6 +609,8 @@ def main():
         config["ai"]["model"] = args.model
     if args.stt_model:
         config["stt"]["model_size"] = args.stt_model
+    if args.emotion:
+        config["emotions"]["initial_emotion"] = args.emotion
     
     try:
         # Create and start assistant
