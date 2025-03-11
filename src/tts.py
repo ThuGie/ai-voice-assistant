@@ -35,6 +35,28 @@ class TTSEngine:
         "spanish_female_1": "es_ES_lucia"
     }
     
+    # Available MeloTTS models
+    AVAILABLE_MODELS = [
+        "en_US/vctk_low",
+        "en_US/vctk_medium",
+        "en_US/ljspeech_low",
+        "en_US/ljspeech_medium",
+        "en_GB/vctk_low",
+        "en_GB/vctk_medium",
+        "fr_FR/css10_low", 
+        "fr_FR/css10_medium",
+        "de_DE/css10_low",
+        "de_DE/css10_medium",
+        "es_ES/css10_low",
+        "es_ES/css10_medium",
+        "it_IT/mls_low",
+        "it_IT/mls_medium",
+        "ja_JP/jsut_low",
+        "ja_JP/jsut_medium",
+        "zh_CN/aishell3_low",
+        "zh_CN/aishell3_medium"
+    ]
+    
     # Default voice parameters
     DEFAULT_VOICE_PARAMS = {
         "rate": 1.0,      # Speech rate multiplier
@@ -43,14 +65,16 @@ class TTSEngine:
         "emphasis": 1.0   # Emphasis/stress multiplier
     }
     
-    def __init__(self, voice: str = "english_male_1"):
+    def __init__(self, voice: str = "english_male_1", model: str = "en_US/vctk_low"):
         """
-        Initialize the TTS engine with the specified voice.
+        Initialize the TTS engine with the specified voice and model.
         
         Args:
             voice: Name of the voice to use (from AVAILABLE_VOICES)
+            model: Name of the model to use (from AVAILABLE_MODELS)
         """
         self.voice = voice
+        self.model_name = model
         self.model = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -59,7 +83,7 @@ class TTSEngine:
         
         try:
             self._load_model()
-            logger.info(f"Initialized TTS engine with voice '{voice}' on {self.device}")
+            logger.info(f"Initialized TTS engine with voice '{voice}' using model '{model}' on {self.device}")
         except Exception as e:
             logger.error(f"Failed to initialize TTS engine: {e}")
             raise
@@ -72,10 +96,23 @@ class TTSEngine:
             if self.voice not in self.AVAILABLE_VOICES:
                 logger.warning(f"Voice '{self.voice}' not recognized. Defaulting to english_male_1.")
                 self.voice = "english_male_1"
+            
+            # Validate model name
+            if self.model_name not in self.AVAILABLE_MODELS:
+                logger.warning(f"Model '{self.model_name}' not recognized. Defaulting to en_US/vctk_low.")
+                self.model_name = "en_US/vctk_low"
                 
-            model_name = self.AVAILABLE_VOICES[self.voice]
-            self.model = MeloTTS(model_name=model_name, device=self.device)
-            logger.info(f"Loaded MeloTTS model '{model_name}'")
+            # For MeloTTS, we use a combination of voice and model
+            # The voice determines character traits, while the model determines quality and language
+            voice_name = self.AVAILABLE_VOICES[self.voice]
+            
+            self.model = MeloTTS(
+                model_name=voice_name,
+                device=self.device,
+                model_path=self.model_name  # Specify the model path
+            )
+            
+            logger.info(f"Loaded MeloTTS model '{voice_name}' with model '{self.model_name}'")
         except ImportError:
             logger.error("Failed to import MeloTTS. Make sure it's installed correctly.")
             raise
@@ -108,6 +145,31 @@ class TTSEngine:
             logger.error(f"Failed to change voice: {e}")
             return False
     
+    def change_model(self, model: str) -> bool:
+        """
+        Change the current TTS model.
+        
+        Args:
+            model: New model to use
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if model not in self.AVAILABLE_MODELS:
+            logger.warning(f"Model '{model}' not recognized.")
+            return False
+        
+        if model == self.model_name:
+            return True  # No change needed
+            
+        self.model_name = model
+        try:
+            self._load_model()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to change model: {e}")
+            return False
+    
     def list_available_voices(self) -> List[str]:
         """
         Get a list of available voice names.
@@ -116,6 +178,15 @@ class TTSEngine:
             List of available voice names
         """
         return list(self.AVAILABLE_VOICES.keys())
+    
+    def list_available_models(self) -> List[str]:
+        """
+        Get a list of available TTS models.
+        
+        Returns:
+            List of available model names
+        """
+        return self.AVAILABLE_MODELS.copy()
     
     def set_voice_parameters(self, params: Dict[str, float]) -> None:
         """
@@ -313,16 +384,22 @@ class TTSEngine:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
-    # Get voice from command line if provided
+    # Get voice and model from command line if provided
     voice = sys.argv[1] if len(sys.argv) > 1 else "english_male_1"
+    model = sys.argv[2] if len(sys.argv) > 2 else "en_US/vctk_low"
     
     # Initialize the TTS engine
-    tts = TTSEngine(voice=voice)
+    tts = TTSEngine(voice=voice, model=model)
     
     # List available voices
     print("Available voices:")
     for voice_name in tts.list_available_voices():
         print(f"- {voice_name}")
+    
+    # List available models
+    print("\nAvailable models:")
+    for model_name in tts.list_available_models():
+        print(f"- {model_name}")
     
     # Test speech synthesis with different voice parameters
     text = "Hello! I am your AI voice assistant. I can help you with various tasks and answer your questions."
