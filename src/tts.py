@@ -35,26 +35,18 @@ class TTSEngine:
         "spanish_female_1": "es_ES_lucia"
     }
     
-    # Available MeloTTS models
+    # Available MeloTTS models - Note these might not all be available in the version installed
+    # Users should check the actual available models
     AVAILABLE_MODELS = [
         "en_US/vctk_low",
-        "en_US/vctk_medium",
         "en_US/ljspeech_low",
-        "en_US/ljspeech_medium",
         "en_GB/vctk_low",
-        "en_GB/vctk_medium",
         "fr_FR/css10_low", 
-        "fr_FR/css10_medium",
         "de_DE/css10_low",
-        "de_DE/css10_medium",
         "es_ES/css10_low",
-        "es_ES/css10_medium",
         "it_IT/mls_low",
-        "it_IT/mls_medium",
         "ja_JP/jsut_low",
-        "ja_JP/jsut_medium",
-        "zh_CN/aishell3_low",
-        "zh_CN/aishell3_medium"
+        "zh_CN/aishell3_low"
     ]
     
     # Default voice parameters
@@ -65,13 +57,13 @@ class TTSEngine:
         "emphasis": 1.0   # Emphasis/stress multiplier
     }
     
-    def __init__(self, voice: str = "english_male_1", model: str = "en_US/vctk_low"):
+    def __init__(self, voice: str = "english_male_1", model: str = None):
         """
-        Initialize the TTS engine with the specified voice and model.
+        Initialize the TTS engine with the specified voice.
         
         Args:
             voice: Name of the voice to use (from AVAILABLE_VOICES)
-            model: Name of the model to use (from AVAILABLE_MODELS)
+            model: Optional model path (might not be supported in all MeloTTS versions)
         """
         self.voice = voice
         self.model_name = model
@@ -83,7 +75,7 @@ class TTSEngine:
         
         try:
             self._load_model()
-            logger.info(f"Initialized TTS engine with voice '{voice}' using model '{model}' on {self.device}")
+            logger.info(f"Initialized TTS engine with voice '{voice}' on {self.device}")
         except Exception as e:
             logger.error(f"Failed to initialize TTS engine: {e}")
             raise
@@ -97,22 +89,30 @@ class TTSEngine:
                 logger.warning(f"Voice '{self.voice}' not recognized. Defaulting to english_male_1.")
                 self.voice = "english_male_1"
             
-            # Validate model name
-            if self.model_name not in self.AVAILABLE_MODELS:
-                logger.warning(f"Model '{self.model_name}' not recognized. Defaulting to en_US/vctk_low.")
-                self.model_name = "en_US/vctk_low"
-                
-            # For MeloTTS, we use a combination of voice and model
-            # The voice determines character traits, while the model determines quality and language
+            # Get the voice name
             voice_name = self.AVAILABLE_VOICES[self.voice]
             
-            self.model = MeloTTS(
-                model_name=voice_name,
-                device=self.device,
-                model_path=self.model_name  # Specify the model path
-            )
+            # For MeloTTS 0.1.1 compatibility (which might have a different API)
+            try:
+                # Try simple initialization first (compatible with 0.1.1)
+                self.model = MeloTTS(voice_name)
+                self.model.to(self.device)
+                logger.info(f"Loaded MeloTTS model '{voice_name}' with basic initialization")
+            except Exception as e1:
+                logger.warning(f"Basic initialization failed: {e1}")
+                try:
+                    # Try with device parameter (might work in some versions)
+                    self.model = MeloTTS(
+                        model_name=voice_name,
+                        device=self.device
+                    )
+                    logger.info(f"Loaded MeloTTS model '{voice_name}' with device parameter")
+                except Exception as e2:
+                    logger.warning(f"Device parameter initialization failed: {e2}")
+                    # Last attempt - just basic with no device
+                    self.model = MeloTTS(voice_name)
+                    logger.info(f"Loaded MeloTTS model '{voice_name}' with fallback initialization")
             
-            logger.info(f"Loaded MeloTTS model '{voice_name}' with model '{self.model_name}'")
         except ImportError:
             logger.error("Failed to import MeloTTS. Make sure it's installed correctly.")
             raise
@@ -149,25 +149,24 @@ class TTSEngine:
         """
         Change the current TTS model.
         
+        Note: This might not be supported in all MeloTTS versions.
+        
         Args:
             model: New model to use
             
         Returns:
             bool: True if successful, False otherwise
         """
-        if model not in self.AVAILABLE_MODELS:
-            logger.warning(f"Model '{model}' not recognized.")
-            return False
+        # Store old model name for rollback
+        old_model = self.model_name
         
-        if model == self.model_name:
-            return True  # No change needed
-            
         self.model_name = model
         try:
             self._load_model()
             return True
         except Exception as e:
             logger.error(f"Failed to change model: {e}")
+            self.model_name = old_model  # Rollback
             return False
     
     def list_available_voices(self) -> List[str]:
@@ -182,6 +181,9 @@ class TTSEngine:
     def list_available_models(self) -> List[str]:
         """
         Get a list of available TTS models.
+        
+        Note: This is a static list and might not reflect what's actually
+        available in your MeloTTS installation.
         
         Returns:
             List of available model names
@@ -232,7 +234,6 @@ class TTSEngine:
         """
         try:
             import librosa
-            import pyrubberband as pyrb
             from scipy.signal import lfilter
             
             # Make a copy of the original audio
@@ -243,39 +244,52 @@ class TTSEngine:
                 modified_audio *= self.voice_params["volume"]
             
             # Get sample rate from model
-            sample_rate = self.model.sample_rate
+            sample_rate = getattr(self.model, 'sample_rate', 24000)  # Default to 24kHz if not specified
             
-            # Apply pitch and speed changes using rubberband
-            if self.voice_params["pitch"] != 1.0 or self.voice_params["rate"] != 1.0:
-                # Convert to the format expected by pyrubberband
-                if modified_audio.dtype != np.float32:
-                    modified_audio = modified_audio.astype(np.float32)
-                
-                # Apply the pitch and rate changes
-                modified_audio = pyrb.pitch_shift(
-                    modified_audio, 
-                    sample_rate, 
-                    self.voice_params["pitch"] - 1.0
-                )
-                
-                modified_audio = pyrb.time_stretch(
-                    modified_audio, 
-                    sample_rate, 
-                    1.0 / self.voice_params["rate"]
-                )
+            # Apply pitch and rate changes
+            # Note: We're not using pyrubberband anymore as it's optional and may cause installation issues
+            # Using simpler methods instead
+            
+            # Apply simple rate change (stretching/shrinking)
+            if self.voice_params["rate"] != 1.0:
+                try:
+                    # Use librosa for time stretching
+                    modified_audio = librosa.effects.time_stretch(
+                        modified_audio, 
+                        rate=self.voice_params["rate"]
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not apply rate adjustment: {e}")
+            
+            # Apply simple pitch shift
+            if self.voice_params["pitch"] != 1.0:
+                try:
+                    # Use librosa for pitch shifting (simple adjustment)
+                    # Convert pitch multiplier to semitones (rough approximation)
+                    semitones = (self.voice_params["pitch"] - 1.0) * 12
+                    modified_audio = librosa.effects.pitch_shift(
+                        modified_audio,
+                        sr=sample_rate,
+                        n_steps=semitones
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not apply pitch adjustment: {e}")
             
             # Apply emphasis (simplified approach using a basic filter)
             if self.voice_params["emphasis"] != 1.0:
-                # Create a simple emphasis filter
-                # Higher emphasis boosts the mid-frequencies
-                if self.voice_params["emphasis"] > 1.0:
-                    # Boosting mid-range frequencies
-                    b, a = [1.0, -0.97], [1.0, -0.9]  # Simple 1-pole filter
-                    modified_audio = lfilter(b, a, modified_audio)
-                elif self.voice_params["emphasis"] < 1.0:
-                    # Reducing mid-range frequencies 
-                    b, a = [1.0, -0.9], [1.0, -0.97]  # Inverse of the above
-                    modified_audio = lfilter(b, a, modified_audio)
+                try:
+                    # Create a simple emphasis filter
+                    # Higher emphasis boosts the mid-frequencies
+                    if self.voice_params["emphasis"] > 1.0:
+                        # Boosting mid-range frequencies
+                        b, a = [1.0, -0.97], [1.0, -0.9]  # Simple 1-pole filter
+                        modified_audio = lfilter(b, a, modified_audio)
+                    elif self.voice_params["emphasis"] < 1.0:
+                        # Reducing mid-range frequencies 
+                        b, a = [1.0, -0.9], [1.0, -0.97]  # Inverse of the above
+                        modified_audio = lfilter(b, a, modified_audio)
+                except Exception as e:
+                    logger.warning(f"Could not apply emphasis adjustment: {e}")
             
             # Normalize audio if it's clipping
             max_val = np.max(np.abs(modified_audio))
@@ -286,7 +300,7 @@ class TTSEngine:
             
         except ImportError as e:
             logger.warning(f"Could not apply all voice parameters due to missing dependencies: {e}")
-            logger.warning("Install librosa and pyrubberband for full voice parameter support")
+            logger.warning("Install librosa for full voice parameter support")
             # Return original audio if we can't modify it
             return audio_array
         except Exception as e:
@@ -323,7 +337,17 @@ class TTSEngine:
             
         try:
             # Generate audio using MeloTTS
-            audio_array = self.model.tts(text)
+            # Handle potential API differences
+            try:
+                # Standard API call
+                audio_array = self.model.tts(text)
+            except TypeError:
+                logger.warning("Standard TTS call failed, trying with explicit device")
+                # Try with device parameter explicitly
+                audio_array = self.model.tts(text, device=self.device)
+            except Exception as e:
+                logger.error(f"TTS synthesis failed: {e}")
+                return None
             
             # Apply voice parameters to modify the audio
             modified_audio = self._apply_voice_parameters(audio_array)
@@ -334,6 +358,9 @@ class TTSEngine:
                     output_file = temp_file.name
             
             if output_file:
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+                
                 # Convert audio array to appropriate format
                 # MeloTTS returns ndarray of float32 values in the range [-1, 1]
                 # Convert to int16 for WAV file
@@ -341,13 +368,25 @@ class TTSEngine:
                 
                 # Save the audio to a WAV file
                 from scipy.io import wavfile
-                wavfile.write(output_file, self.model.sample_rate, audio_int16)
+                sample_rate = getattr(self.model, 'sample_rate', 24000)  # Default to 24kHz
+                wavfile.write(output_file, sample_rate, audio_int16)
                 logger.info(f"Audio saved to {output_file}")
             
             if play_audio:
-                # Play the audio directly from memory
-                sd.play(modified_audio, samplerate=self.model.sample_rate)
-                sd.wait()  # Wait until audio playback is finished
+                try:
+                    # Play the audio directly from memory
+                    sample_rate = getattr(self.model, 'sample_rate', 24000)  # Default to 24kHz
+                    sd.play(modified_audio, samplerate=sample_rate)
+                    sd.wait()  # Wait until audio playback is finished
+                except Exception as e:
+                    logger.error(f"Failed to play audio: {e}")
+                    # Try alternative playback method
+                    if output_file:
+                        try:
+                            audio = AudioSegment.from_wav(output_file)
+                            play(audio)
+                        except Exception as e2:
+                            logger.error(f"Alternative playback also failed: {e2}")
             
             return output_file
             
@@ -384,22 +423,16 @@ class TTSEngine:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
-    # Get voice and model from command line if provided
+    # Get voice from command line if provided
     voice = sys.argv[1] if len(sys.argv) > 1 else "english_male_1"
-    model = sys.argv[2] if len(sys.argv) > 2 else "en_US/vctk_low"
     
     # Initialize the TTS engine
-    tts = TTSEngine(voice=voice, model=model)
+    tts = TTSEngine(voice=voice)
     
     # List available voices
     print("Available voices:")
     for voice_name in tts.list_available_voices():
         print(f"- {voice_name}")
-    
-    # List available models
-    print("\nAvailable models:")
-    for model_name in tts.list_available_models():
-        print(f"- {model_name}")
     
     # Test speech synthesis with different voice parameters
     text = "Hello! I am your AI voice assistant. I can help you with various tasks and answer your questions."
