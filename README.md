@@ -15,6 +15,21 @@ An advanced voice-based AI assistant that integrates multiple open-source techno
 - **Context Awareness**: Maintains session context and can proactively engage based on interests
 - **Extensible Architecture**: Designed for future extensions like VTube Studio support and custom RAG
 
+## Architecture
+
+The AI Voice Assistant is designed with a modular architecture:
+
+- **AIAssistant** (in `src/assistant.py`): The core class that integrates all components
+- **TTSEngine** (in `src/tts.py`): Text-to-speech engine using MeloTTS
+- **STTEngine** (in `src/stt.py`): Speech-to-text engine using Faster-Whisper
+- **AIEngine** (in `src/ai.py`): Interface to large language models through Ollama
+- **VisionEngine** (in `src/vision.py`): Computer vision capabilities using PyTorch Vision
+- **EmotionManager** (in `src/emotions.py`): Manages the assistant's emotional state
+- **Profile** (in `src/profile.py`): Manages the assistant's identity information
+- **Personality** (in `src/personality.py`): Handles the assistant's personality traits
+- **ContextManager** (in `src/context.py`): Maintains conversational context and proactive capabilities
+- **Memory** (in `src/memory.py`): Stores and retrieves conversation history
+
 ## Technologies
 
 This project seamlessly integrates several powerful open-source technologies:
@@ -90,16 +105,16 @@ For more control over the installation process:
 
 2. Customize your assistant with optional parameters:
    ```bash
-   python main.py --voice english_female_1 --model llama3 --stt-model medium
+   python main.py --voice english_female_1 --model llama3 --stt-model medium --name "Nova" --user-name "John"
    ```
 
-3. Start speaking to interact with the assistant
+3. Start speaking to interact with the assistant, or type commands in the terminal
 
 4. Use special commands prefixed with `!` for additional functionality
 
 ## Command Interface
 
-In addition to voice commands, you can use text commands prefixed with `!` during your conversation:
+During your conversation, you can use text commands prefixed with `!`:
 
 - `!exit` or `!quit` - Exit the assistant
 - `!voice [name]` - Change voice or list available voices
@@ -125,8 +140,6 @@ In addition to voice commands, you can use text commands prefixed with `!` durin
 
 ### MeloTTS Voice Selection
 
-MeloTTS comes with several voice options. You can select your preferred voice:
-
 Available voices include:
 - english_male_1
 - english_female_1
@@ -139,13 +152,7 @@ Available voices include:
 
 ### MeloTTS Model Selection
 
-You can select different TTS models for varying quality and language support:
-
-```bash
-python main.py --voice english_male_1 --tts-model en_US/vctk_medium
-```
-
-Available TTS models include:
+Available TTS models include (partial list):
 - en_US/vctk_low
 - en_US/vctk_medium
 - en_US/ljspeech_low
@@ -154,19 +161,8 @@ Available TTS models include:
 - en_GB/vctk_medium
 - fr_FR/css10_low
 - fr_FR/css10_medium
-- de_DE/css10_low
-- de_DE/css10_medium
-- es_ES/css10_low
-- es_ES/css10_medium
-- and more...
 
 ### Speech-to-Text Models
-
-Choose from various Faster-Whisper model sizes:
-
-```bash
-python main.py --stt-model medium
-```
 
 Available STT models:
 - tiny
@@ -178,50 +174,17 @@ Available STT models:
 
 ## Configuration
 
-The assistant can be configured through the `config.json` file. You can modify:
+The assistant can be configured through the `config.json` file. The major configuration sections include:
 
-```json
-{
-  "tts": {
-    "voice": "english_male_1",
-    "model": "en_US/vctk_low"
-  },
-  "stt": {
-    "model_size": "base",
-    "language": "en",
-    "vad_aggressiveness": 3,
-    "silence_threshold_sec": 1.0,
-    "max_recording_sec": 30.0
-  },
-  "ai": {
-    "model": "llama3",
-    "api_base": "http://localhost:11434/api",
-    "system_prompt": ""
-  },
-  "emotions": {
-    "memory_path": "emotions_memory.json",
-    "initial_emotion": "neutral",
-    "initial_intensity": 0.6
-  },
-  "profile": {
-    "profile_path": "assistant_profile.json"
-  },
-  "personality": {
-    "personality_path": "assistant_personality.json"
-  },
-  "context": {
-    "context_path": "assistant_context.json",
-    "idle_initiative": true,
-    "idle_interval_minutes": 20
-  },
-  "memory": {
-    "db_path": "conversations.db"
-  },
-  "vision": {
-    "device": "cuda"
-  }
-}
-```
+- `tts`: Text-to-Speech settings
+- `stt`: Speech-to-Text settings
+- `ai`: AI model settings
+- `emotions`: Emotional framework settings
+- `profile`: Assistant identity settings
+- `personality`: Personality traits settings
+- `context`: Contextual awareness settings
+- `memory`: Conversation storage settings
+- `vision`: Computer vision settings
 
 ## Personality and Emotional Framework
 
@@ -232,7 +195,13 @@ The assistant features an advanced personality and emotional framework:
 - **Personality Traits**: The assistant develops traits like friendliness, formality, curiosity, and enthusiasm
 - **Contextual Awareness**: Remembers topics of interest and can proactively engage
 
-You can ask questions like "How are you feeling?" or use commands like `!emotion` to interact with the emotional framework.
+## Extending the Assistant
+
+The modular design makes it easy to extend the assistant with new capabilities:
+
+1. Add a new module in the `src/` directory
+2. Update the `AIAssistant` class in `src/assistant.py` to integrate the new module
+3. Add configuration options to `config.json` for your new module
 
 ## Future Enhancements
 
@@ -245,8 +214,6 @@ The following features are planned for future releases:
 - **Text-Generation-WebUI Integration**: Support for additional text generation interfaces
 
 ## Troubleshooting
-
-For common issues and solutions, see the [INSTALL.md](INSTALL.md) file.
 
 ### Common Issues
 
