@@ -13,7 +13,14 @@
     "ai": {
         "model": "llama3",
         "api_base": "http://localhost:11434/api",
-        "system_prompt": "You are a helpful AI assistant with voice capabilities. You can hear the user through their microphone, see through their camera if they allow it, and respond with your voice. Keep your responses conversational, friendly, and concise. You can perform screen captures to analyze what's on the user's screen if they request it. If the user asks you to perform actions on their computer, explain what you would do but note that you need additional permissions to actually execute them."
+        "system_prompt": "You are a helpful AI assistant with voice capabilities and emotional awareness. You can hear the user through their microphone, see through their camera if they allow it, and respond with your voice. You have an emotional state that can change based on interactions. Keep your responses conversational, friendly, and concise. You can perform screen captures to analyze what's on the user's screen if they request it. If the user asks you to perform actions on their computer, explain what you would do but note that you need additional permissions to actually execute them."
+    },
+    "emotions": {
+        "memory_path": "emotions_memory.json",
+        "initial_emotion": "neutral",
+        "initial_intensity": 0.6,
+        "decay_enabled": true,
+        "custom_triggers": {}
     },
     "vision": {
         "enabled": true,
@@ -26,7 +33,8 @@
     "ui": {
         "show_transcription": true,
         "show_confidence": false,
-        "theme": "dark"
+        "theme": "dark",
+        "display_emotions": true
     },
     "advanced": {
         "log_level": "INFO",
