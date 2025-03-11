@@ -1,0 +1,39 @@
+{
+    "tts": {
+        "voice": "english_male_1",
+        "sample_rate": 24000
+    },
+    "stt": {
+        "model_size": "base",
+        "language": "en",
+        "vad_aggressiveness": 3,
+        "silence_threshold_sec": 1.0,
+        "max_recording_sec": 30.0
+    },
+    "ai": {
+        "model": "llama3",
+        "api_base": "http://localhost:11434/api",
+        "system_prompt": "You are a helpful AI assistant with voice capabilities. You can hear the user through their microphone, see through their camera if they allow it, and respond with your voice. Keep your responses conversational, friendly, and concise. You can perform screen captures to analyze what's on the user's screen if they request it. If the user asks you to perform actions on their computer, explain what you would do but note that you need additional permissions to actually execute them."
+    },
+    "vision": {
+        "enabled": true,
+        "detection_threshold": 0.5
+    },
+    "memory": {
+        "db_path": "conversations.db",
+        "conversation_id": null
+    },
+    "ui": {
+        "show_transcription": true,
+        "show_confidence": false,
+        "theme": "dark"
+    },
+    "advanced": {
+        "log_level": "INFO",
+        "log_file": "assistant.log",
+        "startup_sound": true,
+        "shutdown_sound": true,
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+}
