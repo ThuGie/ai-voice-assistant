@@ -12,6 +12,8 @@ import logging
 import threading
 import queue
 import tempfile
+import weakref
+import atexit
 from typing import Optional, List, Dict, Callable, Any, Tuple, Union
 import numpy as np
 import webrtcvad
@@ -21,6 +23,22 @@ from faster_whisper import WhisperModel
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+class STTEngineError(Exception):
+    """Base class for STT engine errors."""
+    pass
+
+class ModelLoadError(STTEngineError):
+    """Error raised when model loading fails."""
+    pass
+
+class AudioCaptureError(STTEngineError):
+    """Error raised when audio capture fails."""
+    pass
+
+class TranscriptionError(STTEngineError):
+    """Error raised during transcription."""
+    pass
 
 class STTEngine:
     """Speech-to-Text engine using Faster-Whisper"""
@@ -34,6 +52,9 @@ class STTEngine:
     DEFAULT_VAD_FRAME_DURATION_MS = 30  # Frame duration in milliseconds
     DEFAULT_VAD_SAMPLE_RATE = 16000     # Sample rate in Hz
     DEFAULT_VAD_AGGRESSIVENESS = 3      # Aggressiveness level (0-3)
+    
+    # Keep track of all instances for proper cleanup
+    _instances = set()
     
     def __init__(
         self, 
@@ -81,29 +102,87 @@ class STTEngine:
         self.audio_queue = queue.Queue()
         self.recording_thread = None
         self.processing_thread = None
+        self.stream = None
         
         # VAD (Voice Activity Detection)
-        self.vad = webrtcvad.Vad(self.vad_aggressiveness)
+        self.vad = None
         
-        # Initialize model
-        self._initialize_model()
+        # Model
+        self.model = None
         
-        logger.info(f"STT Engine initialized with {model_size} model on {self.device}")
+        # Initialization locks
+        self._vad_lock = threading.Lock()
+        self._model_lock = threading.Lock()
+        
+        # Register instance for cleanup
+        self._instances.add(weakref.ref(self))
+        atexit.register(self._cleanup_at_exit)
+        
+        # Initialize VAD
+        self._initialize_vad()
+        
+        # Initialize model (can be deferred until needed)
+        try:
+            self._initialize_model()
+            logger.info(f"STT Engine initialized with {model_size} model on {self.device}")
+        except Exception as e:
+            logger.error(f"Failed to initialize model (will retry when needed): {e}")
+    
+    def __del__(self):
+        """Clean up resources when the object is garbage collected"""
+        self.stop_recording()
+        
+        # Clean up recording resources
+        if self.stream is not None and self.stream.active:
+            try:
+                self.stream.close()
+            except Exception:
+                pass
+        
+        # Clear references to larger objects
+        self.model = None
+        self.vad = None
+    
+    @classmethod
+    def _cleanup_at_exit(cls):
+        """Clean up all instances at exit"""
+        instances = list(cls._instances)
+        for ref in instances:
+            instance = ref()
+            if instance is not None:
+                try:
+                    instance.stop_recording()
+                except Exception:
+                    pass  # Ignore errors during shutdown
+    
+    def _initialize_vad(self):
+        """Initialize the Voice Activity Detection module"""
+        with self._vad_lock:
+            try:
+                if self.vad is None:
+                    self.vad = webrtcvad.Vad(self.vad_aggressiveness)
+                    logger.debug(f"Initialized VAD with aggressiveness {self.vad_aggressiveness}")
+            except Exception as e:
+                logger.error(f"Failed to initialize VAD: {e}")
+                raise STTEngineError(f"Failed to initialize Voice Activity Detection: {e}")
     
     def _initialize_model(self):
         """Initialize the Whisper model"""
-        try:
-            # Load the Whisper model
-            logger.info(f"Loading Faster-Whisper {self.model_size} model on {self.device}...")
-            self.model = WhisperModel(
-                model_size_or_path=self.model_size,
-                device=self.device,
-                compute_type=self.compute_type
-            )
-            logger.info("Model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
-            raise
+        with self._model_lock:
+            try:
+                if self.model is None:
+                    # Load the Whisper model
+                    logger.info(f"Loading Faster-Whisper {self.model_size} model on {self.device}...")
+                    self.model = WhisperModel(
+                        model_size_or_path=self.model_size,
+                        device=self.device,
+                        compute_type=self.compute_type,
+                        download_root=os.path.join(os.path.expanduser("~"), ".cache", "faster-whisper")
+                    )
+                    logger.info("Model loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load Whisper model: {e}")
+                raise ModelLoadError(f"Failed to load speech recognition model: {e}")
     
     def start_recording(
         self,
@@ -124,6 +203,13 @@ class STTEngine:
         if self.recording:
             logger.warning("Recording is already in progress")
             return
+        
+        # Make sure model is initialized
+        try:
+            self._initialize_model()
+        except ModelLoadError as e:
+            logger.error(f"Cannot start recording: {e}")
+            raise
         
         self.recording = True
         self.callback = callback
@@ -148,18 +234,44 @@ class STTEngine:
         logger.info("Started audio recording and processing")
     
     def stop_recording(self):
-        """Stop recording audio"""
+        """Stop recording audio and clean up resources"""
         if not self.recording:
             return
             
+        # Signal threads to stop
         self.recording = False
         
         # Wait for threads to terminate
-        if self.recording_thread and self.recording_thread.is_alive():
-            self.recording_thread.join(timeout=2.0)
+        try:
+            if self.recording_thread and self.recording_thread.is_alive():
+                self.recording_thread.join(timeout=2.0)
+        except Exception as e:
+            logger.error(f"Error joining recording thread: {e}")
         
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
+        try:
+            if self.processing_thread and self.processing_thread.is_alive():
+                self.processing_thread.join(timeout=2.0)
+        except Exception as e:
+            logger.error(f"Error joining processing thread: {e}")
+        
+        # Close audio stream if open
+        try:
+            if self.stream is not None and hasattr(self.stream, 'close'):
+                self.stream.close()
+                self.stream = None
+        except Exception as e:
+            logger.error(f"Error closing audio stream: {e}")
+        
+        # Clear audio queue
+        try:
+            while not self.audio_queue.empty():
+                self.audio_queue.get_nowait()
+        except Exception:
+            pass
+        
+        # Reset threads
+        self.recording_thread = None
+        self.processing_thread = None
         
         logger.info("Stopped audio recording")
     
@@ -177,104 +289,135 @@ class STTEngine:
             is_speaking = False
             total_duration = 0
             
-            # Set up stream
-            with sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=channels,
-                dtype='int16',
-                blocksize=chunk_samples,
-                callback=None
-            ) as stream:
+            # Create stream inside the thread
+            try:
+                self.stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=channels,
+                    dtype='int16',
+                    blocksize=chunk_samples,
+                    callback=None
+                )
+                self.stream.start()
                 logger.info("Audio stream started")
-                
-                while self.recording:
-                    # Read audio chunk
-                    chunk, overflowed = stream.read(chunk_samples)
+            except Exception as e:
+                logger.error(f"Failed to open audio stream: {e}")
+                raise AudioCaptureError(f"Failed to access microphone: {e}")
+            
+            # Initialize VAD if not already done
+            if self.vad is None:
+                self._initialize_vad()
+            
+            while self.recording:
+                # Read audio chunk
+                try:
+                    chunk, overflowed = self.stream.read(chunk_samples)
                     if overflowed:
                         logger.warning("Audio buffer overflow detected")
-                    
-                    # Convert to the right format for VAD
-                    chunk_mono = chunk.reshape(-1).astype(np.int16)
-                    
-                    # Check if this chunk contains speech
-                    try:
-                        is_speech = self.vad.is_speech(
-                            chunk_mono.tobytes(),
-                            self.sample_rate
-                        )
-                    except Exception as e:
-                        logger.error(f"VAD error: {e}")
-                        is_speech = False
-                    
-                    # Update state based on VAD result
-                    if is_speech and not is_speaking:
-                        # Start of speech detected
-                        is_speaking = True
-                        silence_counter = 0
-                        speech_buffer = [chunk_mono]
-                        logger.debug("Speech started")
-                    
-                    elif is_speech and is_speaking:
-                        # Continuing speech
-                        speech_buffer.append(chunk_mono)
-                        silence_counter = 0
-                    
-                    elif not is_speech and is_speaking:
-                        # Possible silence during speech
-                        speech_buffer.append(chunk_mono)
-                        silence_counter += chunk_duration_ms / 1000
-                        
-                        # If silence exceeds threshold, consider speech segment complete
-                        if silence_counter >= self.silence_threshold_sec:
-                            is_speaking = False
-                            
-                            # Combine all chunks into one audio segment
-                            combined_audio = np.concatenate(speech_buffer)
-                            
-                            # Put in queue for processing
-                            self.audio_queue.put(combined_audio)
-                            
-                            logger.debug(f"Speech segment complete: {len(combined_audio) / self.sample_rate:.2f}s")
-                            speech_buffer = []
-                    
-                    # Check if max duration exceeded while speaking
-                    if is_speaking:
-                        total_duration += chunk_duration_ms / 1000
-                        if total_duration >= self.max_recording_sec:
-                            # Max duration reached, force end of segment
-                            is_speaking = False
-                            
-                            # Combine all chunks into one audio segment
-                            combined_audio = np.concatenate(speech_buffer)
-                            
-                            # Put in queue for processing
-                            self.audio_queue.put(combined_audio)
-                            
-                            logger.debug(f"Max duration reached: {total_duration:.2f}s")
-                            speech_buffer = []
-                            total_duration = 0
-                    
-                    # Small delay to prevent CPU hogging
-                    time.sleep(0.001)
+                except Exception as e:
+                    logger.error(f"Failed to read from audio stream: {e}")
+                    if self.recording:  # Only raise if we're still supposed to be recording
+                        raise AudioCaptureError(f"Failed to read from microphone: {e}")
+                    break
                 
-                # Final check for any remaining audio
-                if speech_buffer:
-                    combined_audio = np.concatenate(speech_buffer)
-                    self.audio_queue.put(combined_audio)
-                    logger.debug(f"Final speech segment: {len(combined_audio) / self.sample_rate:.2f}s")
+                # Convert to the right format for VAD
+                chunk_mono = chunk.reshape(-1).astype(np.int16)
+                
+                # Check if this chunk contains speech
+                try:
+                    is_speech = self.vad.is_speech(
+                        chunk_mono.tobytes(),
+                        self.sample_rate
+                    )
+                except Exception as e:
+                    logger.error(f"VAD error: {e}")
+                    is_speech = False
+                
+                # Update state based on VAD result
+                if is_speech and not is_speaking:
+                    # Start of speech detected
+                    is_speaking = True
+                    silence_counter = 0
+                    speech_buffer = [chunk_mono]
+                    logger.debug("Speech started")
+                
+                elif is_speech and is_speaking:
+                    # Continuing speech
+                    speech_buffer.append(chunk_mono)
+                    silence_counter = 0
+                
+                elif not is_speech and is_speaking:
+                    # Possible silence during speech
+                    speech_buffer.append(chunk_mono)
+                    silence_counter += chunk_duration_ms / 1000
+                    
+                    # If silence exceeds threshold, consider speech segment complete
+                    if silence_counter >= self.silence_threshold_sec:
+                        is_speaking = False
+                        
+                        # Combine all chunks into one audio segment
+                        combined_audio = np.concatenate(speech_buffer)
+                        
+                        # Put in queue for processing
+                        self.audio_queue.put(combined_audio)
+                        
+                        logger.debug(f"Speech segment complete: {len(combined_audio) / self.sample_rate:.2f}s")
+                        speech_buffer = []
+                
+                # Check if max duration exceeded while speaking
+                if is_speaking:
+                    total_duration += chunk_duration_ms / 1000
+                    if total_duration >= self.max_recording_sec:
+                        # Max duration reached, force end of segment
+                        is_speaking = False
+                        
+                        # Combine all chunks into one audio segment
+                        combined_audio = np.concatenate(speech_buffer)
+                        
+                        # Put in queue for processing
+                        self.audio_queue.put(combined_audio)
+                        
+                        logger.debug(f"Max duration reached: {total_duration:.2f}s")
+                        speech_buffer = []
+                        total_duration = 0
+                
+                # Small delay to prevent CPU hogging
+                time.sleep(0.001)
+            
+            # Final check for any remaining audio
+            if speech_buffer:
+                combined_audio = np.concatenate(speech_buffer)
+                self.audio_queue.put(combined_audio)
+                logger.debug(f"Final speech segment: {len(combined_audio) / self.sample_rate:.2f}s")
         
         except Exception as e:
             logger.error(f"Error in recording thread: {e}")
+            # If this is a fatal error in the recording thread, we should stop the entire process
+            self.recording = False
+        finally:
+            # Clean up stream if it exists
+            try:
+                if self.stream is not None and hasattr(self.stream, 'close'):
+                    self.stream.close()
+                    self.stream = None
+            except Exception as e:
+                logger.error(f"Error closing audio stream during cleanup: {e}")
         
         logger.info("Recording thread terminated")
     
     def _process_audio_thread(self):
         """Thread for processing audio segments and transcribing"""
+        temp_files = []  # Keep track of temp files for cleanup
+        
         try:
             while self.recording or not self.audio_queue.empty():
                 try:
                     # Get audio segment from queue (with timeout to check recording flag)
-                    audio_segment = self.audio_queue.get(timeout=0.5)
+                    try:
+                        audio_segment = self.audio_queue.get(timeout=0.5)
+                    except queue.Empty:
+                        # Queue empty, continue to check recording flag
+                        continue
                     
                     # Skip very short segments (likely noise)
                     duration_sec = len(audio_segment) / self.sample_rate
@@ -283,7 +426,11 @@ class STTEngine:
                         continue
                     
                     # Save audio to temporary file for processing
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                    temp_file = None
+                    try:
+                        temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                        temp_files.append(temp_file.name)
+                        
                         # Create WAV file from numpy array
                         audio_segment_pydub = AudioSegment(
                             data=audio_segment.tobytes(),
@@ -296,28 +443,41 @@ class STTEngine:
                         # Use Whisper to transcribe
                         logger.debug(f"Transcribing audio segment: {duration_sec:.2f}s")
                         result = self._transcribe(temp_file.name)
-                        
-                        # Clean up temporary file
-                        temp_file_name = temp_file.name
+                    finally:
+                        # Close temp file handle
+                        if temp_file:
+                            temp_file.close()
                     
-                    os.unlink(temp_file_name)
+                    # Clean up temporary file
+                    self._safe_delete_file(temp_file.name)
+                    if temp_file.name in temp_files:
+                        temp_files.remove(temp_file.name)
                     
                     # If result is not empty, call callback with transcription
                     if result and result.strip():
                         logger.info(f"Transcription: {result}")
-                        if self.callback:
+                        if self.callback and self.recording:  # Only call if still recording
                             self.callback(result)
                 
-                except queue.Empty:
-                    # Queue empty, continue to check recording flag
-                    continue
                 except Exception as e:
                     logger.error(f"Error processing audio segment: {e}")
         
         except Exception as e:
             logger.error(f"Error in processing thread: {e}")
+        finally:
+            # Clean up any remaining temp files
+            for file_path in temp_files:
+                self._safe_delete_file(file_path)
         
         logger.info("Processing thread terminated")
+    
+    def _safe_delete_file(self, file_path: str):
+        """Safely delete a file, ignoring errors"""
+        try:
+            if os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temporary file {file_path}: {e}")
     
     def _transcribe(self, audio_file: str) -> str:
         """
@@ -330,6 +490,9 @@ class STTEngine:
             Transcribed text
         """
         try:
+            # Ensure model is initialized
+            self._initialize_model()
+            
             # Use Whisper to transcribe
             segments, info = self.model.transcribe(
                 audio=audio_file,
@@ -352,7 +515,7 @@ class STTEngine:
         
         except Exception as e:
             logger.error(f"Transcription error: {e}")
-            return ""
+            raise TranscriptionError(f"Failed to transcribe audio: {e}")
     
     def transcribe_file(self, audio_file: str) -> str:
         """
@@ -364,6 +527,9 @@ class STTEngine:
         Returns:
             Transcribed text
         """
+        if not os.path.exists(audio_file):
+            raise FileNotFoundError(f"Audio file not found: {audio_file}")
+        
         return self._transcribe(audio_file)
     
     def change_model(self, model_size: str) -> bool:
@@ -386,6 +552,9 @@ class STTEngine:
         
         # Update model size
         self.model_size = model_size
+        
+        # Clear current model
+        self.model = None
         
         # Re-initialize model
         try:
