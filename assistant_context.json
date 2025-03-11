@@ -1,0 +1,13 @@
+{
+  "important_topics": [],
+  "user_interests": [],
+  "session_history": [],
+  "idle_initiative_count": 0,
+  "last_initiative_time": null,
+  "conversation_statistics": {
+    "total_conversations": 0,
+    "total_messages": 0,
+    "average_response_length": 0
+  },
+  "last_updated": "2025-03-11T00:00:00.000Z"
+}
