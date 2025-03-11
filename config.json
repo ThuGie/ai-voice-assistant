@@ -1,6 +1,7 @@
 {
     "tts": {
         "voice": "english_male_1",
+        "model": "en_US/vctk_low",
         "sample_rate": 24000
     },
     "stt": {
@@ -13,7 +14,7 @@
     "ai": {
         "model": "llama3",
         "api_base": "http://localhost:11434/api",
-        "system_prompt": "You are a helpful AI assistant with voice capabilities and emotional awareness. You can hear the user through their microphone, see through their camera if they allow it, and respond with your voice. You have an emotional state that can change based on interactions. Keep your responses conversational, friendly, and concise. You can perform screen captures to analyze what's on the user's screen if they request it. If the user asks you to perform actions on their computer, explain what you would do but note that you need additional permissions to actually execute them."
+        "system_prompt": "You are a helpful AI assistant with voice capabilities, emotional awareness, and a unique personality. You can hear the user through their microphone, see through their camera if they allow it, and respond with your voice. Keep your responses conversational, friendly, and concise. You can perform screen captures to analyze what's on the user's screen if they request it. If the user asks you to perform actions on their computer, explain what you would do but note that you need additional permissions to actually execute them."
     },
     "emotions": {
         "memory_path": "emotions_memory.json",
@@ -22,13 +23,39 @@
         "decay_enabled": true,
         "custom_triggers": {}
     },
+    "profile": {
+        "profile_path": "assistant_profile.json",
+        "name": "Assistant",
+        "user_name": ""
+    },
+    "personality": {
+        "personality_path": "assistant_personality.json",
+        "friendliness": 0.7,
+        "formality": 0.5,
+        "enthusiasm": 0.6,
+        "humor": 0.5,
+        "curiosity": 0.7,
+        "patience": 0.8
+    },
+    "context": {
+        "context_path": "assistant_context.json",
+        "idle_initiative": true,
+        "idle_interval_minutes": 20,
+        "max_topics": 100,
+        "relevance_threshold": 0.6
+    },
     "vision": {
         "enabled": true,
-        "detection_threshold": 0.5
+        "device": "cuda",
+        "detection_threshold": 0.5,
+        "screenshot_quality": 0.8,
+        "webcam_index": 0
     },
     "memory": {
         "db_path": "conversations.db",
-        "conversation_id": null
+        "conversation_id": null,
+        "max_conversation_age_days": 30,
+        "auto_save": true
     },
     "ui": {
         "show_transcription": true,
@@ -42,6 +69,7 @@
         "startup_sound": true,
         "shutdown_sound": true,
         "temperature": 0.7,
-        "max_tokens": 500
+        "max_tokens": 500,
+        "streaming": true
     }
 }
