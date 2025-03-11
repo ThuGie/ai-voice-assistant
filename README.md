@@ -7,10 +7,13 @@ An advanced voice-based AI assistant that integrates multiple open-source techno
 - **Voice Interaction**: Speak naturally to your AI using Faster-Whisper for accurate speech-to-text conversion
 - **Voice Response**: AI responses are converted to natural-sounding speech with MeloTTS
 - **Multiple Voice Options**: Select from various voice models in MeloTTS to customize your experience
+- **Emotional Awareness**: Assistant can express emotions through voice modulation and response style
+- **Personality Development**: Assistant develops a unique personality that evolves through interactions
 - **Local AI Model**: Uses Ollama to run powerful AI models locally on your machine
 - **Computer Vision**: Integrated PyTorch Vision capabilities allow the AI to "see" your screen or camera
-- **Extensible Architecture**: Designed for future extensions like VTube Studio support and custom RAG
 - **Conversation Memory**: Stores and references past conversations for more contextual interactions
+- **Context Awareness**: Maintains session context and can proactively engage based on interests
+- **Extensible Architecture**: Designed for future extensions like VTube Studio support and custom RAG
 
 ## Technologies
 
@@ -27,6 +30,7 @@ This project seamlessly integrates several powerful open-source technologies:
 - CUDA-compatible GPU recommended for optimal performance
 - Microphone for voice input
 - Speakers for voice output
+- Webcam (optional, for vision capabilities)
 
 ## Quick Installation
 
@@ -52,7 +56,7 @@ For more control over the installation process:
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/ai-voice-assistant.git
+   git clone https://github.com/ThuGie/ai-voice-assistant.git
    cd ai-voice-assistant
    ```
 
@@ -60,7 +64,7 @@ For more control over the installation process:
    ```bash
    python -m venv venv
    # On Windows
-   venv\Scripts\activate
+   venv\\Scripts\\activate
    # On macOS/Linux
    source venv/bin/activate
    ```
@@ -84,14 +88,14 @@ For more control over the installation process:
    python main.py
    ```
 
-2. Select your preferred voice model when prompted
+2. Customize your assistant with optional parameters:
+   ```bash
+   python main.py --voice english_female_1 --model llama3 --stt-model medium
+   ```
 
 3. Start speaking to interact with the assistant
 
-4. Use special commands for additional functionality:
-   - "Take a screenshot" - Captures and analyzes your screen
-   - "Share my window" - Allows the AI to see a specific window
-   - "Remember this conversation" - Explicitly saves the current conversation for future reference
+4. Use special commands prefixed with `!` for additional functionality
 
 ## Command Interface
 
@@ -99,30 +103,29 @@ In addition to voice commands, you can use text commands prefixed with `!` durin
 
 - `!exit` or `!quit` - Exit the assistant
 - `!voice [name]` - Change voice or list available voices
+- `!voice_model [name]` - Change TTS model or list available models
 - `!model [name]` - Change AI model or list available models
+- `!name [new_name]` - Change assistant name
+- `!user [name]` - Set or show user name
+- `!personality` - Show current personality
+- `!personality set <trait> <value>` - Set personality trait (0-1)
 - `!screenshot` - Take and analyze a screenshot
 - `!webcam` - Capture and analyze from webcam
-- `!memory` - Conversation memory management
+- `!memory` - Show current conversation info
 - `!memory list` - List recent conversations
 - `!memory switch <id>` - Switch to a different conversation
 - `!memory new [title]` - Create a new conversation
+- `!emotion` - Show current emotion status
+- `!emotion set <emotion> [intensity]` - Set emotion manually
+- `!emotion reset` - Reset to neutral emotion
+- `!emotion triggers` - List emotion triggers
 - `!help` - Show help information
 
-## Voice Model Selection
+## Voice and Model Selection
 
-MeloTTS comes with several voice models. You can select your preferred voice by:
+### MeloTTS Voice Selection
 
-1. Using the command line argument:
-   ```bash
-   python main.py --voice english_male_1
-   ```
-
-2. Selecting from the menu when the application starts
-
-3. Changing the voice during a conversation with:
-   ```
-   "Change voice to [voice_name]"
-   ```
+MeloTTS comes with several voice options. You can select your preferred voice:
 
 Available voices include:
 - english_male_1
@@ -134,16 +137,102 @@ Available voices include:
 - french_male_1
 - spanish_female_1
 
+### MeloTTS Model Selection
+
+You can select different TTS models for varying quality and language support:
+
+```bash
+python main.py --voice english_male_1 --tts-model en_US/vctk_medium
+```
+
+Available TTS models include:
+- en_US/vctk_low
+- en_US/vctk_medium
+- en_US/ljspeech_low
+- en_US/ljspeech_medium
+- en_GB/vctk_low
+- en_GB/vctk_medium
+- fr_FR/css10_low
+- fr_FR/css10_medium
+- de_DE/css10_low
+- de_DE/css10_medium
+- es_ES/css10_low
+- es_ES/css10_medium
+- and more...
+
+### Speech-to-Text Models
+
+Choose from various Faster-Whisper model sizes:
+
+```bash
+python main.py --stt-model medium
+```
+
+Available STT models:
+- tiny
+- base
+- small
+- medium
+- large-v2
+- large-v3
+
 ## Configuration
 
 The assistant can be configured through the `config.json` file. You can modify:
 
-- TTS settings (voice, sample rate)
-- STT settings (model size, language)
-- AI settings (model, system prompt)
-- Vision settings
-- Memory settings
-- UI preferences
+```json
+{
+  "tts": {
+    "voice": "english_male_1",
+    "model": "en_US/vctk_low"
+  },
+  "stt": {
+    "model_size": "base",
+    "language": "en",
+    "vad_aggressiveness": 3,
+    "silence_threshold_sec": 1.0,
+    "max_recording_sec": 30.0
+  },
+  "ai": {
+    "model": "llama3",
+    "api_base": "http://localhost:11434/api",
+    "system_prompt": ""
+  },
+  "emotions": {
+    "memory_path": "emotions_memory.json",
+    "initial_emotion": "neutral",
+    "initial_intensity": 0.6
+  },
+  "profile": {
+    "profile_path": "assistant_profile.json"
+  },
+  "personality": {
+    "personality_path": "assistant_personality.json"
+  },
+  "context": {
+    "context_path": "assistant_context.json",
+    "idle_initiative": true,
+    "idle_interval_minutes": 20
+  },
+  "memory": {
+    "db_path": "conversations.db"
+  },
+  "vision": {
+    "device": "cuda"
+  }
+}
+```
+
+## Personality and Emotional Framework
+
+The assistant features an advanced personality and emotional framework:
+
+- **Emotional States**: The assistant can express various emotions (happy, excited, neutral, concerned, confused, sad, angry) that are influenced by your interactions
+- **Voice Modulation**: Emotions affect speech parameters like rate, pitch, volume, and emphasis
+- **Personality Traits**: The assistant develops traits like friendliness, formality, curiosity, and enthusiasm
+- **Contextual Awareness**: Remembers topics of interest and can proactively engage
+
+You can ask questions like "How are you feeling?" or use commands like `!emotion` to interact with the emotional framework.
 
 ## Future Enhancements
 
@@ -158,6 +247,23 @@ The following features are planned for future releases:
 ## Troubleshooting
 
 For common issues and solutions, see the [INSTALL.md](INSTALL.md) file.
+
+### Common Issues
+
+#### MeloTTS Issues
+
+- **Error loading voice model**: Make sure you have sufficient disk space and a good internet connection for downloading models
+- **CUDA out of memory**: Try using a smaller model (e.g., switch from medium to low quality)
+
+#### Faster-Whisper Issues
+
+- **Speech recognition not working**: Check your microphone settings and ensure it's properly connected
+- **Poor recognition quality**: Try a larger model size (`--stt-model medium` or `--stt-model large-v2`)
+
+#### Ollama Issues
+
+- **Connection refused**: Make sure Ollama is running (`ollama serve`)
+- **Model not found**: Ensure you've pulled the model (`ollama pull llama3`)
 
 ## Contributing
 
