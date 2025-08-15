@@ -54,6 +54,10 @@ class AIAssistant:
         self.ai = None
         self.vision = None
         self.memory = None
+        self.web = None
+        self.control = None
+        self.rag = None
+        self.vtube = None
         
         # Track which components were successfully initialized
         self.initialized_components = set()
@@ -79,13 +83,17 @@ class AIAssistant:
         # Define the initialization order with dependencies considered
         initialization_order = [
             ('profile', self._init_profile),
+            ('vtube', self._init_vtube),
             ('emotions', self._init_emotions), 
             ('personality', self._init_personality),
             ('context', self._init_context), 
             ('memory', self._init_memory),
             ('tts', self._init_tts),
             ('stt', self._init_stt),
-            ('ai', self._init_ai)
+            ('ai', self._init_ai),
+            ('web', self._init_web),
+            ('control', self._init_control),
+            ('rag', self._init_rag)
             # Vision is initialized on demand
         ]
         
@@ -165,7 +173,8 @@ class AIAssistant:
         self.emotions = EmotionManager(
             memory_path=emotion_config.get("memory_path", "emotions_memory.json"),
             initial_emotion=emotion_config.get("initial_emotion", EmotionType.NEUTRAL.value),
-            initial_intensity=emotion_config.get("initial_intensity", 0.6)
+            initial_intensity=emotion_config.get("initial_intensity", 0.6),
+            vtube_studio=self.vtube
         )
     
     def _init_tts(self):
@@ -241,7 +250,52 @@ class AIAssistant:
         self.memory = Memory(
             db_path=memory_config.get("db_path", "conversations.db")
         )
-    
+
+    def _init_web(self):
+        """Initialize the WebBrowser component"""
+        # Import here to avoid circular imports
+        from src.web import WebBrowser
+
+        web_config = self.config.get("web", {})
+        self.web = WebBrowser(
+            timeout=web_config.get("timeout", 10)
+        )
+
+    def _init_control(self):
+        """Initialize the PCController component"""
+        # Import here to avoid circular imports
+        from src.control import PCController
+
+        self.control = PCController()
+
+    def _init_rag(self):
+        """Initialize the RAG component"""
+        # Import here to avoid circular imports
+        from src.rag import RAG
+
+        rag_config = self.config.get("rag", {})
+        self.rag = RAG(
+            persist_directory=rag_config.get("persist_directory", "./rag_db"),
+            collection_name=rag_config.get("collection_name", "knowledge"),
+            model_name=rag_config.get("model_name", 'all-MiniLM-L6-v2')
+        )
+        if not self.rag.is_available:
+            logger.warning("RAG component is not available. To enable it, please install the required dependencies: pip install chromadb sentence-transformers")
+
+    def _init_vtube(self):
+        """Initialize the VTubeStudio component"""
+        # Import here to avoid circular imports
+        from src.vtube import VTubeStudio
+
+        vtube_config = self.config.get("vtube", {})
+        self.vtube = VTubeStudio(
+            plugin_name=vtube_config.get("plugin_name", "AI_Assistant"),
+            plugin_developer=vtube_config.get("plugin_developer", "Jules"),
+            auth_token_path=vtube_config.get("auth_token_path", "./vts_token.txt")
+        )
+        if not self.vtube.is_available:
+            logger.warning("VTubeStudio component is not available. To enable it, please install the required dependencies: pip install pyvts")
+
     def _initialize_vision(self):
         """Initialize Vision engine on demand"""
         # Skip if vision is already initialized
@@ -465,6 +519,16 @@ class AIAssistant:
                 self.vision.release_webcam()
             except Exception as e:
                 logger.error(f"Error releasing webcam: {e}")
+
+        # Clean up vtube resources if initialized
+        if 'vtube' in self.initialized_components and self.vtube and self.vtube.is_available:
+            try:
+                # Since vtube methods are async, we need to run them in the event loop
+                if self.vtube.loop and self.vtube.loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(self.vtube.close(), self.vtube.loop)
+                    future.result(timeout=5)
+            except Exception as e:
+                logger.error(f"Error closing VTube Studio connection: {e}")
         
         # Final message
         farewell = f"Shutting down. Goodbye!"
@@ -753,7 +817,16 @@ class AIAssistant:
                     context_addition = "Based on our previous conversations: "
                     for topic in relevant_topics:
                         context_addition += f"{topic['topic']}: {topic['content']} "
-            
+
+            # Query RAG for additional context
+            rag_context = ""
+            if 'rag' in self.initialized_components and self.rag and self.rag.is_available:
+                rag_results = self.rag.query(user_input)
+                if rag_results:
+                    rag_context = "\n\nHere is some information from my knowledge base that might be relevant:\n"
+                    for result in rag_results:
+                        rag_context += f"- {result}\n"
+
             # Add user message to memory if memory is available
             if 'memory' in self.initialized_components and self.memory:
                 self.memory.add_message(self.conversation_id, "user", user_input)
@@ -773,7 +846,9 @@ class AIAssistant:
                     prompt = user_input
                     if context_addition:
                         prompt += f"\n\nRecall from previous conversations: {context_addition}"
-                        
+                    if rag_context:
+                        prompt += rag_context
+
                     response = self.ai.generate_response(
                         prompt,
                         stream=True,
@@ -1311,6 +1386,83 @@ class AIAssistant:
                         logger.error(f"Error executing memory command: {e}")
                         print(f"Error executing memory command: {e}")
                 
+                elif cmd == "browse":
+                    # Browse a URL if web is available
+                    if 'web' not in self.initialized_components or not self.web:
+                        print("Web browsing is not available.")
+                        continue
+
+                    if args:
+                        url = args[0]
+                        logger.info(f"Browsing URL: {url}")
+                        try:
+                            summary = self.web.browse(url)
+                            print(f"Summary of {url}:\n{summary}")
+
+                            # Speak response if TTS is available
+                            if 'tts' in self.initialized_components and self.tts:
+                                self.tts.speak(f"I have browsed the page and here is a summary. {summary}")
+
+                        except Exception as e:
+                            logger.error(f"Error browsing URL: {e}")
+                            print(f"Error browsing URL: {e}")
+                    else:
+                        print("Please provide a URL to browse.")
+
+                elif cmd == "type":
+                    if 'control' not in self.initialized_components or not self.control:
+                        print("PC control is not available.")
+                        continue
+                    if args:
+                        text_to_type = " ".join(args)
+                        result = self.control.type_text(text_to_type)
+                        print(result)
+                    else:
+                        print("Please provide text to type.")
+
+                elif cmd == "click":
+                    if 'control' not in self.initialized_components or not self.control:
+                        print("PC control is not available.")
+                        continue
+                    if len(args) >= 2:
+                        try:
+                            x, y = int(args[0]), int(args[1])
+                            button = args[2] if len(args) > 2 else 'left'
+                            count = int(args[3]) if len(args) > 3 else 1
+                            result = self.control.click(x, y, button, count)
+                            print(result)
+                        except ValueError:
+                            print("Invalid coordinates. Please provide integer values for x and y.")
+                    else:
+                        print("Please provide x and y coordinates to click.")
+
+                elif cmd == "scroll":
+                    if 'control' not in self.initialized_components or not self.control:
+                        print("PC control is not available.")
+                        continue
+                    if len(args) >= 2:
+                        try:
+                            dx, dy = int(args[0]), int(args[1])
+                            result = self.control.scroll(dx, dy)
+                            print(result)
+                        except ValueError:
+                            print("Invalid scroll values. Please provide integer values for dx and dy.")
+                    else:
+                        print("Please provide dx and dy scroll values.")
+
+                elif cmd == "learn":
+                    if 'rag' not in self.initialized_components or not self.rag:
+                        print("Learning is not available.")
+                        continue
+                    if args:
+                        doc_path = " ".join(args)
+                        result = self.rag.add_document(doc_path)
+                        print(result)
+                        if 'tts' in self.initialized_components and self.tts:
+                            self.tts.speak(result)
+                    else:
+                        print("Please provide a document path to learn from.")
+
                 elif cmd == "help":
                     # Show help information
                     self._show_help()
@@ -1339,7 +1491,11 @@ class AIAssistant:
             'emotion': 'emotions' in self.initialized_components,
             'screenshot': 'vision' in self.initialized_components,
             'webcam': 'vision' in self.initialized_components,
-            'memory': 'memory' in self.initialized_components
+            'memory': 'memory' in self.initialized_components,
+            'web': 'web' in self.initialized_components,
+            'control': 'control' in self.initialized_components,
+            'rag': 'rag' in self.initialized_components,
+            'vtube': 'vtube' in self.initialized_components and self.vtube.is_available
         }
         
         print("Available commands:")
@@ -1369,7 +1525,21 @@ class AIAssistant:
             
         if available_components['webcam']:
             print("  !webcam - Capture and analyze from webcam")
-            
+
+        if available_components['web']:
+            print("  !browse [url] - Browse a URL and get a summary")
+
+        if available_components['control']:
+            print("  !type [text] - Type the given text")
+            print("  !click [x] [y] [button] [count] - Click mouse at coordinates")
+            print("  !scroll [dx] [dy] - Scroll the mouse wheel")
+
+        if available_components['rag']:
+            print("  !learn [document_path] - Learn from a document")
+
+        if available_components['vtube']:
+            print("  VTube Studio integration is active. Emotions will be reflected on your avatar.")
+
         if available_components['memory']:
             print("  !memory - Show current conversation info")
             print("  !memory list - List recent conversations")

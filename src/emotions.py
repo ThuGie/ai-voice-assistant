@@ -128,7 +128,8 @@ class EmotionManager:
                 initial_emotion: str = EmotionType.NEUTRAL.value,
                 initial_intensity: float = EmotionIntensity.MODERATE.value,
                 custom_triggers: Optional[Dict[str, List[str]]] = None,
-                custom_decay_rates: Optional[Dict[str, float]] = None):
+                custom_decay_rates: Optional[Dict[str, float]] = None,
+                vtube_studio: Optional[Any] = None):
         """
         Initialize the emotion manager.
         
@@ -138,12 +139,14 @@ class EmotionManager:
             initial_intensity: Initial emotion intensity
             custom_triggers: Custom emotion triggers
             custom_decay_rates: Custom emotion decay rates
+            vtube_studio: Instance of the VTubeStudio class
         """
         self.memory_path = memory_path
         self.current_emotion = initial_emotion
         self.current_intensity = initial_intensity
         self.emotion_levels = self._initialize_emotion_levels()
         self.last_update_time = datetime.now()
+        self.vtube_studio = vtube_studio
         
         # Load or initialize triggers and memories
         self.triggers = custom_triggers or self.DEFAULT_TRIGGERS.copy()
@@ -209,6 +212,10 @@ class EmotionManager:
             self.current_intensity = self.emotion_levels[EmotionType.NEUTRAL.value]
         
         logger.debug(f"Current emotion updated to {self.current_emotion} at intensity {self.current_intensity:.2f}")
+
+        # Update VTube Studio emotion
+        if self.vtube_studio:
+            self.vtube_studio.set_emotion(self.current_emotion)
     
     def _apply_emotion_decay(self):
         """Apply decay to emotions based on time elapsed"""

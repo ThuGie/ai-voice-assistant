@@ -40,6 +40,7 @@ class AIEngine:
     def __init__(self, 
                 model: str = DEFAULT_MODEL, 
                 api_base: str = DEFAULT_API_BASE,
+                api_type: str = 'ollama',
                 context_window: int = 4096,
                 system_prompt: Optional[str] = None,
                 auto_start_ollama: bool = True):
@@ -47,14 +48,16 @@ class AIEngine:
         Initialize the AI engine with the specified model.
         
         Args:
-            model: Name of the Ollama model to use
-            api_base: Base URL for the Ollama API
+            model: Name of the model to use
+            api_base: Base URL for the API
+            api_type: Type of API ('ollama' or 'text-generation-webui')
             context_window: Size of the context window in tokens
             system_prompt: System prompt to use for the conversation
             auto_start_ollama: Whether to attempt to start Ollama if not running
         """
         self.model = model
         self.api_base = api_base.rstrip("/")  # Remove trailing slash if present
+        self.api_type = api_type
         self.context_window = context_window
         self.auto_start_ollama = auto_start_ollama
         
@@ -72,31 +75,35 @@ class AIEngine:
         
         # Add system prompt to conversation history
         self._add_to_history("system", self.system_prompt)
-        
-        try:
-            # Check if Ollama is available
-            self._check_ollama_availability()
-            logger.info(f"Initialized AI engine with model '{model}'")
-        except OllamaConnectionError as e:
-            if self.auto_start_ollama:
-                self._start_ollama_server()
-                # Try again after starting
-                try:
-                    self._check_ollama_availability()
-                    logger.info(f"Started Ollama server and initialized AI engine with model '{model}'")
-                except Exception as e:
-                    logger.error(f"Still failed to connect to Ollama after starting server: {e}")
+
+        if self.api_type == 'ollama':
+            try:
+                # Check if Ollama is available
+                self._check_ollama_availability()
+                logger.info(f"Initialized AI engine with model '{model}'")
+            except OllamaConnectionError as e:
+                if self.auto_start_ollama:
+                    self._start_ollama_server()
+                    # Try again after starting
+                    try:
+                        self._check_ollama_availability()
+                        logger.info(f"Started Ollama server and initialized AI engine with model '{model}'")
+                    except Exception as e:
+                        logger.error(f"Still failed to connect to Ollama after starting server: {e}")
+                        raise
+                else:
+                    logger.error(f"Failed to connect to Ollama: {e}")
+                    logger.error("Make sure Ollama is running (`ollama serve`) and accessible")
                     raise
-            else:
-                logger.error(f"Failed to connect to Ollama: {e}")
-                logger.error("Make sure Ollama is running (`ollama serve`) and accessible")
+            except OllamaModelError as e:
+                logger.error(f"Model error: {e}")
                 raise
-        except OllamaModelError as e:
-            logger.error(f"Model error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to initialize AI engine: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Failed to initialize AI engine: {e}")
+                raise
+        else:
+            # For other API types, we assume the server is running and accessible
+            logger.info(f"Initialized AI engine with model '{model}' for API type '{self.api_type}'")
     
     def _is_ollama_installed(self) -> bool:
         """Check if Ollama is installed on the system"""
@@ -255,22 +262,39 @@ class AIEngine:
         self._add_to_history("user", prompt)
         
         try:
-            # Prepare request payload
-            payload = {
-                "model": self.model,
-                "messages": self.conversation_history,
-                "stream": stream,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens
+            if self.api_type == 'ollama':
+                # Prepare request payload for Ollama
+                payload = {
+                    "model": self.model,
+                    "messages": self.conversation_history,
+                    "stream": stream,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens
+                    }
                 }
-            }
-            
-            # Send request to Ollama API
-            if stream:
-                return self._generate_streaming(payload, stream_callback)
+
+                # Send request to Ollama API
+                if stream:
+                    return self._generate_streaming(payload, stream_callback)
+                else:
+                    return self._generate_complete(payload)
+            elif self.api_type == 'text-generation-webui':
+                # Prepare request payload for OpenAI-compatible API
+                payload = {
+                    "model": self.model,
+                    "messages": self.conversation_history,
+                    "stream": stream,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+
+                if stream:
+                    return self._generate_streaming_webui(payload, stream_callback)
+                else:
+                    return self._generate_complete_webui(payload)
             else:
-                return self._generate_complete(payload)
+                raise ValueError(f"Unsupported API type: {self.api_type}")
         except OllamaConnectionError as e:
             error_msg = f"Lost connection to Ollama: {e}"
             logger.error(error_msg)
@@ -352,6 +376,31 @@ class AIEngine:
         except Exception as e:
             logger.error(f"Error generating complete response: {e}")
             raise
+
+    def _generate_complete_webui(self, payload: Dict[str, Any]) -> str:
+        """
+        Generate a complete response from a WebUI API.
+
+        Args:
+            payload: Request payload
+
+        Returns:
+            Complete generated response
+        """
+        try:
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                json=payload,
+                timeout=120
+            )
+            response.raise_for_status()
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            self._add_to_history("assistant", content)
+            return content
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error calling Text-Generation-WebUI API: {e}")
+            raise OllamaConnectionError(f"Failed to connect to WebUI: {e}")
     
     def _generate_streaming(self, payload: Dict[str, Any], callback: Optional[Callable[[str], None]]) -> str:
         """
@@ -430,6 +479,53 @@ class AIEngine:
         except Exception as e:
             logger.error(f"Error generating streaming response: {e}")
             raise
+
+    def _generate_streaming_webui(self, payload: Dict[str, Any], callback: Optional[Callable[[str], None]]) -> str:
+        """
+        Generate a streaming response from a WebUI API.
+
+        Args:
+            payload: Request payload
+            callback: Callback function for streaming response
+
+        Returns:
+            Complete generated response (after streaming)
+        """
+        full_response = ""
+        try:
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                json=payload,
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        line = line[6:]
+                        if line.strip() == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(line)
+                            if 'choices' in chunk and chunk['choices']:
+                                delta = chunk['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    full_response += content
+                                    if callback:
+                                        callback(content)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Could not decode JSON from stream: {line}")
+                            continue
+
+            self._add_to_history("assistant", full_response)
+            return full_response
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error calling Text-Generation-WebUI API: {e}")
+            raise OllamaConnectionError(f"Failed to connect to WebUI: {e}")
     
     def clear_history(self, keep_system_prompt: bool = True):
         """
@@ -454,16 +550,32 @@ class AIEngine:
         Returns:
             List of available models with metadata
         """
-        try:
-            response = requests.get(f"{self.api_base}/tags", timeout=5)
-            response.raise_for_status()
-            return response.json().get("models", [])
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to list available models: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to list available models: {e}")
-            return []
+        if self.api_type == 'ollama':
+            try:
+                response = requests.get(f"{self.api_base}/tags", timeout=5)
+                response.raise_for_status()
+                return response.json().get("models", [])
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to list available models from Ollama: {e}")
+                return []
+            except Exception as e:
+                logger.error(f"Failed to list available models from Ollama: {e}")
+                return []
+        elif self.api_type == 'text-generation-webui':
+            try:
+                response = requests.get(f"{self.api_base}/models", timeout=5)
+                response.raise_for_status()
+                # The WebUI API returns a list of model objects in the 'data' field
+                models_data = response.json().get("data", [])
+                # We need to format this to be similar to Ollama's output
+                return [{"name": model["id"]} for model in models_data]
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to list available models from WebUI: {e}")
+                return []
+            except Exception as e:
+                logger.error(f"Failed to list available models from WebUI: {e}")
+                return []
+        return []
     
     def change_model(self, model: str) -> bool:
         """
@@ -476,27 +588,26 @@ class AIEngine:
             bool: True if successful, False otherwise
         """
         try:
-            # Check if model exists
             available_models = [m["name"] for m in self.list_available_models()]
             
             if model not in available_models:
-                logger.warning(f"Model '{model}' not found. Attempting to pull it...")
-                
-                # Try to pull the model
-                old_model = self.model
-                self.model = model
-                try:
-                    self._pull_model()
-                except Exception as pull_error:
-                    logger.error(f"Failed to pull model '{model}': {pull_error}")
-                    self.model = old_model  # Revert to old model
+                if self.api_type == 'ollama':
+                    logger.warning(f"Model '{model}' not found. Attempting to pull it...")
+                    old_model = self.model
+                    self.model = model
+                    try:
+                        self._pull_model()
+                    except Exception as pull_error:
+                        logger.error(f"Failed to pull model '{model}': {pull_error}")
+                        self.model = old_model  # Revert to old model
+                        return False
+                else:
+                    logger.error(f"Model '{model}' not available in Text-Generation-WebUI.")
                     return False
-            
-            # Change the model
+
             self.model = model
             logger.info(f"Changed model to '{model}'")
             
-            # Clear conversation history but keep system prompt
             self.clear_history(keep_system_prompt=True)
             
             return True
