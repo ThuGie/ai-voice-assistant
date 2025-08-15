@@ -13,6 +13,7 @@ An advanced voice-based AI assistant that integrates multiple open-source techno
 - **Computer Vision**: Integrated PyTorch Vision capabilities allow the AI to "see" your screen or camera
 - **Conversation Memory**: Stores and references past conversations for more contextual interactions
 - **Context Awareness**: Maintains session context and can proactively engage based on interests
+- **Web Search**: Can search the web for up-to-date information to answer questions.
 - **Extensible Architecture**: Designed for future extensions like VTube Studio support and custom RAG
 
 ## Architecture
@@ -124,6 +125,7 @@ During your conversation, you can use text commands prefixed with `!`:
 - `!user [name]` - Set or show user name
 - `!personality` - Show current personality
 - `!personality set <trait> <value>` - Set personality trait (0-1)
+- `!search <query>` - Perform a web search for the given query
 - `!screenshot` - Take and analyze a screenshot
 - `!webcam` - Capture and analyze from webcam
 - `!memory` - Show current conversation info

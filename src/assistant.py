@@ -54,6 +54,7 @@ class AIAssistant:
         self.ai = None
         self.vision = None
         self.memory = None
+        self.web_search = None
         
         # Track which components were successfully initialized
         self.initialized_components = set()
@@ -85,7 +86,8 @@ class AIAssistant:
             ('memory', self._init_memory),
             ('tts', self._init_tts),
             ('stt', self._init_stt),
-            ('ai', self._init_ai)
+            ('ai', self._init_ai),
+            ('web_search', self._init_web_search)
             # Vision is initialized on demand
         ]
         
@@ -231,6 +233,13 @@ class AIAssistant:
                 )
             else:
                 raise
+
+    def _init_web_search(self):
+        """Initialize the Web Search Engine component"""
+        # Import here to avoid circular imports
+        from src.web_search import WebSearchEngine
+
+        self.web_search = WebSearchEngine()
     
     def _init_memory(self):
         """Initialize the Memory component"""
@@ -315,6 +324,11 @@ class AIAssistant:
             
             "When the user asks you to change your name or personality aspects, "
             "you should acknowledge and adapt to these changes.\n"
+            "\n"
+            "You have the ability to search the web for current information. "
+            "If a question requires up-to-date information that you don't have, "
+            "respond with `[SEARCH] <your search query>`. For example, if the user asks "
+            "'What's the weather in London?', you should respond with `[SEARCH] weather in London`."
         )
         
         logger.debug(f"Created system prompt of length {len(system_prompt)}")
@@ -792,6 +806,36 @@ class AIAssistant:
                             print(f"{assistant_name}: {styled_response}")
                             response = styled_response
                     
+                    # Check for search command
+                    if response.strip().startswith("[SEARCH]"):
+                        search_query = response.strip().replace("[SEARCH]", "").strip()
+                        logger.info(f"AI requested a web search for: {search_query}")
+
+                        # Perform the search
+                        search_results = self.web_search.search(search_query)
+
+                        # Create a new prompt with the search results
+                        if search_results:
+                            search_context = "Here are the search results:\n"
+                            for i, result in enumerate(search_results, 1):
+                                search_context += f"{i}. {result['title']}: {result['snippet']}\n"
+
+                            final_prompt = (
+                                f"Based on the following search results, please answer the user's original question: '{user_input}'.\n\n"
+                                f"Search Results:\n{search_context}"
+                            )
+
+                            # Generate the final response
+                            final_response = self.ai.generate_response(
+                                final_prompt,
+                                stream=False
+                            )
+                            response = final_response
+                            print(f"\n{assistant_name}: {response}")
+                        else:
+                            response = "I couldn't find any information on the web about that."
+                            print(f"\n{assistant_name}: {response}")
+
                     # Update emotional state based on AI response if emotions are available
                     if 'emotions' in self.initialized_components and self.emotions:
                         self.emotions.process_message(response, source="assistant")
@@ -1311,6 +1355,31 @@ class AIAssistant:
                         logger.error(f"Error executing memory command: {e}")
                         print(f"Error executing memory command: {e}")
                 
+                elif cmd == "search":
+                    # Perform a web search
+                    if 'web_search' not in self.initialized_components or not self.web_search:
+                        print("Web search is not available.")
+                        continue
+
+                    if args:
+                        query = " ".join(args)
+                        logger.info(f"Performing manual web search for: {query}")
+                        try:
+                            results = self.web_search.search(query)
+                            if results:
+                                print(f"Search results for '{query}':")
+                                for i, result in enumerate(results, 1):
+                                    print(f"  {i}. {result['title']}")
+                                    print(f"     Link: {result['link']}")
+                                    print(f"     Snippet: {result['snippet']}")
+                            else:
+                                print(f"No results found for '{query}'")
+                        except Exception as e:
+                            logger.error(f"Error during web search: {e}")
+                            print(f"Error during web search: {e}")
+                    else:
+                        print("Please provide a search query. Usage: !search <query>")
+
                 elif cmd == "help":
                     # Show help information
                     self._show_help()
@@ -1339,7 +1408,8 @@ class AIAssistant:
             'emotion': 'emotions' in self.initialized_components,
             'screenshot': 'vision' in self.initialized_components,
             'webcam': 'vision' in self.initialized_components,
-            'memory': 'memory' in self.initialized_components
+            'memory': 'memory' in self.initialized_components,
+            'search': 'web_search' in self.initialized_components
         }
         
         print("Available commands:")
@@ -1369,6 +1439,9 @@ class AIAssistant:
             
         if available_components['webcam']:
             print("  !webcam - Capture and analyze from webcam")
+
+        if available_components['search']:
+            print("  !search <query> - Perform a web search")
             
         if available_components['memory']:
             print("  !memory - Show current conversation info")
